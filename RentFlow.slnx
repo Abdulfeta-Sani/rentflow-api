@@ -1,3 +1,6 @@
 <Solution>
   <Project Path="RentFlow.Api/RentFlow.Api.csproj" />
+  <Project Path="RentFlow.Application/RentFlow.Application.csproj" />
+  <Project Path="RentFlow.Domain/RentFlow.Domain.csproj" />
+  <Project Path="RentFlow.Infrastructure/RentFlow.Infrastructure.csproj" />
 </Solution>
