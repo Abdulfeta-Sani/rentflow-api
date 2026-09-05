@@ -1,7 +1,9 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using RentFlow.Infrastructure.Identity;
 using RentFlow.Infrastructure.Services;
 
@@ -74,6 +76,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("login")]
+    [EnableRateLimiting("login")]
     public async Task<IActionResult> Login(
         LoginRequest request,
         CancellationToken cancellationToken)
@@ -97,6 +100,9 @@ public class AuthController : ControllerBase
             return Unauthorized();
 
         var tokens = await _tokenService.IssueAsync(user, cancellationToken);
+        await HttpContext.SignInAsync(
+            "RentFlowCookie",
+            await CreatePrincipalAsync(user));
 
         return Ok(new
         {
@@ -140,6 +146,7 @@ public class AuthController : ControllerBase
                 cancellationToken);
         }
 
+        await HttpContext.SignOutAsync("RentFlowCookie");
         return Ok(new { message = "Logged out successfully." });
     }
 
@@ -166,6 +173,23 @@ public class AuthController : ControllerBase
         lastName = user.LastName,
         accountStatus = user.AccountStatus.ToString()
     };
+
+    private async Task<ClaimsPrincipal> CreatePrincipalAsync(AppUser user)
+    {
+        var claims = new List<Claim>
+        {
+            new(ClaimTypes.NameIdentifier, user.Id),
+            new(ClaimTypes.Name, user.UserName ?? user.Email ?? user.Id),
+            new(ClaimTypes.Email, user.Email ?? string.Empty),
+            new("accountStatus", user.AccountStatus.ToString())
+        };
+
+        var roles = await _userManager.GetRolesAsync(user);
+        claims.AddRange(roles.Select(role => new Claim(ClaimTypes.Role, role)));
+
+        return new ClaimsPrincipal(
+            new ClaimsIdentity(claims, "RentFlowCookie"));
+    }
 }
 
 public sealed class RegisterRequest
