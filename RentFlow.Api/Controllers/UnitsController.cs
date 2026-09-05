@@ -14,6 +14,7 @@ public sealed class UnitsController : ControllerBase
     private readonly RentFlowDbContext _dbContext;
     private readonly IAuthorizationService _authorizationService;
 
+
     public UnitsController(
         RentFlowDbContext dbContext,
         IAuthorizationService authorizationService)

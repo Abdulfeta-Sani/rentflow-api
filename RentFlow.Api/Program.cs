@@ -5,9 +5,11 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Threading.RateLimiting;
 using System.Text;
+using MediatR;
 using RentFlow.Api.Authorization.Handlers;
 using RentFlow.Api.Authorization.Policies;
 using RentFlow.Api.Authorization.Requirements;
+using RentFlow.Application.Features.Properties.Handlers.PropertyCommandHandlers;
 using RentFlow.Application.Interfaces;
 using RentFlow.Infrastructure.Identity;
 using RentFlow.Infrastructure.Persistence;
@@ -19,6 +21,9 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddOpenApi();
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddMediatR(configuration =>
+    configuration.RegisterServicesFromAssembly(
+        typeof(CreatePropertyCommandHandler).Assembly));
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -131,6 +136,7 @@ builder.Services.AddAuthorization(options =>
 });
 builder.Services.AddScoped<ITokenService, TokenServices>();
 builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
+builder.Services.AddScoped<IPropertyService, PropertyService>();
 builder.Services.AddScoped<IAuthorizationHandler, ActiveUserAuthorizationHandler>();
 builder.Services.AddScoped<IAuthorizationHandler, PropertyOwnerAuthorizationHandler>();
 builder.Services.AddScoped<IAuthorizationHandler, UnitOwnerAuthorizationHandler>();
