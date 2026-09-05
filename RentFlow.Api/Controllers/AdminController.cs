@@ -30,18 +30,25 @@ public sealed class AdminController : ControllerBase
         var users = await _userManager.Users
             .AsNoTracking()
             .OrderBy(user => user.Email)
-            .Select(user => new AdminUserResponse(
+            .ToListAsync(cancellationToken);
+
+        var responses = new List<AdminUserResponse>(users.Count);
+        foreach (var user in users)
+        {
+            var roles = await _userManager.GetRolesAsync(user);
+            responses.Add(new AdminUserResponse(
                 user.Id,
                 user.Email!,
                 user.PhoneNumber,
                 user.FirstName,
                 user.LastName,
-                user.AccountStatus,
+                roles.FirstOrDefault() ?? string.Empty,
+                user.AccountStatus.ToString(),
                 user.CreatedAtUtc,
-                user.UpdatedAtUtc))
-            .ToListAsync(cancellationToken);
+                user.UpdatedAtUtc));
+        }
 
-        return Ok(users);
+        return Ok(responses);
     }
 
     [HttpPost("users/{id}/activate")]
@@ -108,6 +115,7 @@ public sealed record AdminUserResponse(
     string? PhoneNumber,
     string FirstName,
     string LastName,
-    AccountStatus AccountStatus,
+    string Role,
+    string AccountStatus,
     DateTime CreatedAtUtc,
     DateTime? UpdatedAtUtc);

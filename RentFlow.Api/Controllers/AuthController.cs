@@ -108,7 +108,7 @@ public class AuthController : ControllerBase
         {
             accessToken = tokens.AccessToken,
             refreshToken = tokens.RefreshToken,
-            user = ToUserResponse(user)
+            user = await ToUserResponse(user)
         });
     }
 
@@ -161,18 +161,24 @@ public class AuthController : ControllerBase
         var user = await _userManager.FindByIdAsync(userId);
         return user is null
             ? NotFound()
-            : Ok(ToUserResponse(user));
+            : Ok(await ToUserResponse(user));
     }
 
-    private static object ToUserResponse(AppUser user) => new
+    private async Task<object> ToUserResponse(AppUser user)
     {
-        id = user.Id,
-        email = user.Email,
-        phoneNumber = user.PhoneNumber,
-        firstName = user.FirstName,
-        lastName = user.LastName,
-        accountStatus = user.AccountStatus.ToString()
-    };
+        var roles = await _userManager.GetRolesAsync(user);
+
+        return new
+        {
+            id = user.Id,
+            email = user.Email,
+            phoneNumber = user.PhoneNumber,
+            firstName = user.FirstName,
+            lastName = user.LastName,
+            role = roles.FirstOrDefault(),
+            accountStatus = user.AccountStatus.ToString()
+        };
+    }
 
     private async Task<ClaimsPrincipal> CreatePrincipalAsync(AppUser user)
     {
