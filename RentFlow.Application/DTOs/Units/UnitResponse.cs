@@ -10,4 +10,7 @@ public sealed record UnitResponse(
     int Bathrooms,
     decimal MonthlyRent,
     decimal SecurityDeposit,
-    UnitStatus Status);
+    UnitStatus Status)
+{
+    public string Currency => "ETB";
+}
