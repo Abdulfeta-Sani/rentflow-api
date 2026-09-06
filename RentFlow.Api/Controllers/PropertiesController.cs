@@ -25,7 +25,9 @@ public sealed class PropertiesController : ControllerBase
     {
         var properties = await _dbContext.Properties
             .AsNoTracking()
-            .Where(property => property.Status == PropertyStatus.Published)
+            .Where(property =>
+                property.Status == PropertyStatus.Published &&
+                property.Units.Any(unit => unit.Status == UnitStatus.Available))
             .OrderByDescending(property => property.CreatedAtUtc)
             .Select(property => new PropertyResponse(
                 property.Id,
@@ -53,7 +55,8 @@ public sealed class PropertiesController : ControllerBase
             .AsNoTracking()
             .Where(item =>
                 item.Id == id &&
-                item.Status == PropertyStatus.Published)
+                item.Status == PropertyStatus.Published &&
+                item.Units.Any(unit => unit.Status == UnitStatus.Available))
             .Select(item => new PropertyDetailResponse(
                 item.Id,
                 item.Name,
@@ -66,6 +69,7 @@ public sealed class PropertiesController : ControllerBase
                 item.CreatedAtUtc,
                 item.UpdatedAtUtc,
                 item.Units
+                    .Where(unit => unit.Status == UnitStatus.Available)
                     .OrderBy(unit => unit.NameOrNumber)
                     .Select(unit => new PropertyUnitResponse(
                         unit.Id,
