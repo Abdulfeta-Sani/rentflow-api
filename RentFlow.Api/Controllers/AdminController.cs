@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using RentFlow.Infrastructure.Identity;
 using RentFlow.Infrastructure.Persistence;
+using RentFlow.Domain.Entities;
 
 namespace RentFlow.Api.Controllers;
 
@@ -69,6 +70,76 @@ public sealed class AdminController : ControllerBase
         CancellationToken cancellationToken) =>
         ChangeStatusAsync(id, AccountStatus.Deactivated, true, cancellationToken);
 
+    [HttpGet("properties")]
+    public async Task<ActionResult<IReadOnlyList<AdminPropertyResponse>>> GetProperties(
+        CancellationToken cancellationToken)
+    {
+        var properties = await _dbContext.Properties.AsNoTracking()
+            .Include(property => property.Units)
+            .OrderBy(property => property.Name)
+            .ToListAsync(cancellationToken);
+        var owners = await _userManager.Users
+            .Where(user => properties.Select(property => property.OwnerId).Contains(user.Id))
+            .ToDictionaryAsync(user => user.Id, cancellationToken);
+        return Ok(properties.Select(property => new AdminPropertyResponse(
+            property.Id, property.OwnerId,
+            owners.GetValueOrDefault(property.OwnerId) is { } owner
+                ? $"{owner.FirstName} {owner.LastName}".Trim() : null,
+            property.Name, property.Address, property.City, property.Status,
+            property.Units.Count, property.Units.Count(unit => unit.Status == UnitStatus.Occupied))));
+    }
+
+    [HttpGet("applications")]
+    public async Task<ActionResult<IReadOnlyList<AdminApplicationResponse>>> GetApplications(
+        CancellationToken cancellationToken)
+    {
+        var applications = await _dbContext.RentalApplications.AsNoTracking()
+            .Include(application => application.Unit).ThenInclude(unit => unit.Property)
+            .OrderByDescending(application => application.SubmittedAtUtc)
+            .ToListAsync(cancellationToken);
+        var users = await _userManager.Users
+            .Where(user => applications.Select(application => application.TenantId).Contains(user.Id))
+            .ToDictionaryAsync(user => user.Id, cancellationToken);
+        return Ok(applications.Select(application =>
+        {
+            var tenant = users.GetValueOrDefault(application.TenantId);
+            return new AdminApplicationResponse(
+                application.Id, application.Status, application.TenantId,
+                tenant is null ? null : $"{tenant.FirstName} {tenant.LastName}".Trim(),
+                application.Unit.PropertyId, application.Unit.Property.Name,
+                application.Unit.NameOrNumber, application.SubmittedAtUtc,
+                application.ReviewedAtUtc);
+        }));
+    }
+
+    [HttpPost("properties/{id:guid}/suspend")]
+    public async Task<IActionResult> SuspendProperty(Guid id, CancellationToken cancellationToken)
+    {
+        var property = await _dbContext.Properties.SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
+        if (property is null)
+            return NotFound();
+        property.Status = PropertyStatus.Suspended;
+        property.UpdatedAtUtc = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return Ok(new { propertyId = id, status = property.Status });
+    }
+
+    [HttpDelete("properties/{id:guid}")]
+    public async Task<IActionResult> RemoveProperty(Guid id, CancellationToken cancellationToken)
+    {
+        var property = await _dbContext.Properties
+            .Include(item => item.Units).ThenInclude(unit => unit.Applications)
+            .SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
+        if (property is null)
+            return NotFound();
+        if (property.Units.Any(unit => unit.Status == UnitStatus.Occupied))
+            return Conflict("A property with occupied units cannot be removed.");
+        _dbContext.RentalApplications.RemoveRange(property.Units.SelectMany(unit => unit.Applications));
+        _dbContext.Properties.Remove(property);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return NoContent();
+    }
+
     private async Task<IActionResult> ChangeStatusAsync(
         string id,
         AccountStatus status,
@@ -119,3 +190,25 @@ public sealed record AdminUserResponse(
     string AccountStatus,
     DateTime CreatedAtUtc,
     DateTime? UpdatedAtUtc);
+
+public sealed record AdminPropertyResponse(
+    Guid Id,
+    string OwnerId,
+    string? OwnerName,
+    string Name,
+    string Address,
+    string City,
+    PropertyStatus Status,
+    int UnitCount,
+    int OccupiedUnitCount);
+
+public sealed record AdminApplicationResponse(
+    Guid Id,
+    RentalApplicationStatus Status,
+    string TenantId,
+    string? TenantName,
+    Guid PropertyId,
+    string PropertyName,
+    string UnitNameOrNumber,
+    DateTime SubmittedAtUtc,
+    DateTime? ReviewedAtUtc);
