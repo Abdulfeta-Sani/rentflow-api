@@ -1,7 +1,10 @@
 using System.Security.Claims;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Mvc;
+using RentFlow.Domain.Entities;
+using RentFlow.Infrastructure.Persistence;
 using RentFlow.Api.Authorization.Policies;
 using RentFlow.Application.DTOs.Properties;
 using RentFlow.Application.Features.Properties.Commands;
@@ -15,10 +18,12 @@ namespace RentFlow.Api.Controllers;
 public sealed class OwnerPropertiesController : ControllerBase
 {
     private readonly ISender _sender;
+    private readonly RentFlowDbContext _dbContext;
 
-    public OwnerPropertiesController(ISender sender)
+    public OwnerPropertiesController(ISender sender, RentFlowDbContext dbContext)
     {
         _sender = sender;
+        _dbContext = dbContext;
     }
 
     [HttpGet]
@@ -130,6 +135,36 @@ public sealed class OwnerPropertiesController : ControllerBase
             cancellationToken);
 
         return property is null ? NotFound() : Ok(property);
+    }
+
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> DeleteProperty(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var ownerId = GetCurrentUserId();
+        if (ownerId is null)
+            return Unauthorized();
+
+        var property = await _dbContext.Properties
+            .Include(item => item.Units)
+            .ThenInclude(unit => unit.Applications)
+            .SingleOrDefaultAsync(
+                item => item.Id == id && item.OwnerId == ownerId,
+                cancellationToken);
+
+        if (property is null)
+            return NotFound();
+
+        if (property.Units.Any(unit => unit.Status == UnitStatus.Occupied))
+            return Conflict("A property with occupied units cannot be deleted.");
+
+        _dbContext.RentalApplications.RemoveRange(
+            property.Units.SelectMany(unit => unit.Applications));
+        _dbContext.Properties.Remove(property);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return NoContent();
     }
 
     private string? GetCurrentUserId() =>
