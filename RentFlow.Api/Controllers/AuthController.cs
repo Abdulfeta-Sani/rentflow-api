@@ -164,6 +164,30 @@ public class AuthController : ControllerBase
             : Ok(await ToUserResponse(user));
     }
 
+    [Authorize]
+    [HttpPut("me")]
+    public async Task<IActionResult> UpdateProfile(
+        UpdateProfileRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrWhiteSpace(userId))
+            return Unauthorized();
+
+        var user = await _userManager.FindByIdAsync(userId);
+        if (user is null)
+            return NotFound();
+
+        user.FirstName = request.FirstName.Trim();
+        user.LastName = request.LastName.Trim();
+        user.PhoneNumber = request.PhoneNumber;
+        user.UpdatedAtUtc = DateTime.UtcNow;
+        var result = await _userManager.UpdateAsync(user);
+        return result.Succeeded
+            ? Ok(await ToUserResponse(user))
+            : BadRequest(result.Errors);
+    }
+
     private async Task<object> ToUserResponse(AppUser user)
     {
         var roles = await _userManager.GetRolesAsync(user);
@@ -217,4 +241,11 @@ public sealed class LoginRequest
 public sealed class RefreshRequest
 {
     public string RefreshToken { get; set; } = string.Empty;
+}
+
+public sealed class UpdateProfileRequest
+{
+    public string FirstName { get; set; } = string.Empty;
+    public string LastName { get; set; } = string.Empty;
+    public string? PhoneNumber { get; set; }
 }
