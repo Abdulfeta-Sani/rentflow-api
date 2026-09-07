@@ -15,10 +15,31 @@ using RentFlow.Application.Interfaces;
 using RentFlow.Infrastructure.Identity;
 using RentFlow.Infrastructure.Persistence;
 using RentFlow.Infrastructure.Services;
+using Microsoft.OpenApi;
 
 var builder = WebApplication.CreateBuilder(args);
 
 const string FrontendCorsPolicy = "Frontend";
+
+// builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        In = ParameterLocation.Header,
+        Description = "Enter your JWT token. Example: Bearer {your token}"
+    });
+
+   options.AddSecurityRequirement(document =>
+        new OpenApiSecurityRequirement
+        {
+            [new OpenApiSecuritySchemeReference("Bearer", document)] = []
+        });
+});
 
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
@@ -170,6 +191,8 @@ var app = builder.Build();
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
+       app.UseSwagger();
+    app.UseSwaggerUI();
 }
 
 app.UseHttpsRedirection();
