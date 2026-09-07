@@ -189,6 +189,8 @@ public sealed class OwnerUnitsController : ControllerBase
             return Unauthorized();
 
         var unit = await _dbContext.Units
+            .Include(item => item.Applications)
+            .Include(item => item.Tenancies)
             .SingleOrDefaultAsync(
                 item => item.Id == id &&
                         item.Property.OwnerId == ownerId,
@@ -200,10 +202,65 @@ public sealed class OwnerUnitsController : ControllerBase
         if (unit.Status == UnitStatus.Occupied)
             return Conflict("Occupied units cannot be archived.");
 
+        var hasHistoricalRecords =
+            unit.Applications.Any(application =>
+                application.Status != RentalApplicationStatus.Submitted)
+            || unit.Tenancies.Any();
+
+        if (hasHistoricalRecords)
+        {
+            unit.Status = UnitStatus.Archived;
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            return Conflict(
+                "This unit has historical records and has been archived instead of deleted.");
+        }
+
         unit.Status = UnitStatus.Archived;
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         return Ok(ToResponse(unit));
+    }
+
+    [HttpDelete("units/{id:guid}")]
+    public async Task<IActionResult> DeleteUnit(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var ownerId = GetCurrentUserId();
+        if (ownerId is null)
+            return Unauthorized();
+
+        var unit = await _dbContext.Units
+            .Include(item => item.Applications)
+            .Include(item => item.Tenancies)
+            .SingleOrDefaultAsync(
+                item => item.Id == id &&
+                        item.Property.OwnerId == ownerId,
+                cancellationToken);
+
+        if (unit is null)
+            return NotFound();
+
+        if (unit.Status == UnitStatus.Occupied)
+            return Conflict("Occupied units cannot be deleted.");
+
+        var hasHistoricalRecords =
+            unit.Applications.Any(application =>
+                application.Status != RentalApplicationStatus.Submitted)
+            || unit.Tenancies.Any();
+
+        if (hasHistoricalRecords)
+        {
+            unit.Status = UnitStatus.Archived;
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            return Conflict(
+                "This unit has historical records and has been archived instead of deleted.");
+        }
+
+        _dbContext.Units.Remove(unit);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return NoContent();
     }
 
     private string? GetCurrentUserId() =>
