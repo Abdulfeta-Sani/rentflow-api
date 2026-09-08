@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -30,6 +31,7 @@ public sealed class RentalApplicationsController : ControllerBase
 
     [Authorize(Policy = AuthorizationPolicies.TenantOnly)]
     [HttpGet("mine")]
+    [HttpGet("~/api/v1/tenant/applications")]
     public async Task<ActionResult<IReadOnlyList<RentalApplicationResponse>>> GetMine(
         CancellationToken cancellationToken)
     {
@@ -52,6 +54,7 @@ public sealed class RentalApplicationsController : ControllerBase
 
     [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
     [HttpGet("owner")]
+    [HttpGet("~/api/v1/owner/applications")]
     public async Task<ActionResult<IReadOnlyList<RentalApplicationResponse>>> GetOwnerApplications(
         CancellationToken cancellationToken)
     {
@@ -98,8 +101,9 @@ public sealed class RentalApplicationsController : ControllerBase
         var alreadyApplied = await _dbContext.RentalApplications.AnyAsync(
             application => application.UnitId == request.UnitId &&
                            application.TenantId == tenantId &&
-                           application.Status != RentalApplicationStatus.Rejected &&
-                           application.Status != RentalApplicationStatus.Withdrawn,
+                           (application.Status == RentalApplicationStatus.Submitted ||
+                            application.Status == RentalApplicationStatus.UnderReview ||
+                            application.Status == RentalApplicationStatus.Approved),
             cancellationToken);
 
         if (alreadyApplied)
@@ -126,7 +130,19 @@ public sealed class RentalApplicationsController : ControllerBase
     }
 
     [Authorize(Policy = AuthorizationPolicies.TenantOnly)]
+    [HttpPost("~/api/v1/units/{unitId:guid}/applications")]
+    public async Task<ActionResult<RentalApplicationResponse>> CreateForUnit(
+        Guid unitId,
+        CreateRentalApplicationRequest request,
+        CancellationToken cancellationToken)
+    {
+        request.UnitId = unitId;
+        return await Create(request, cancellationToken);
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.TenantOnly)]
     [HttpPost("{id:guid}/withdraw")]
+    [HttpPost("~/api/v1/tenant/applications/{id:guid}/withdraw")]
     public async Task<IActionResult> Withdraw(Guid id, CancellationToken cancellationToken)
     {
         var tenantId = GetCurrentUserId();
@@ -149,11 +165,44 @@ public sealed class RentalApplicationsController : ControllerBase
 
     [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
     [HttpPost("{id:guid}/approve")]
+    [HttpPost("~/api/v1/owner/applications/{id:guid}/approve")]
     public Task<IActionResult> Approve(Guid id, CancellationToken cancellationToken) =>
         ReviewAsync(id, RentalApplicationStatus.Approved, null, cancellationToken);
 
     [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
+    [HttpPost("~/api/v1/owner/applications/{id:guid}/start-review")]
+    public async Task<IActionResult> StartReview(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var ownerId = GetCurrentUserId();
+        if (ownerId is null)
+            return Unauthorized();
+
+        var application = await _dbContext.RentalApplications
+            .Include(item => item.Unit)
+            .ThenInclude(unit => unit.Property)
+            .SingleOrDefaultAsync(
+                item => item.Id == id &&
+                        item.Unit.Property.OwnerId == ownerId,
+                cancellationToken);
+
+        if (application is null)
+            return NotFound();
+
+        if (application.Status != RentalApplicationStatus.Submitted)
+            return Conflict("Only submitted applications can start review.");
+
+        application.Status = RentalApplicationStatus.UnderReview;
+        application.ReviewedAtUtc = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return Ok(application);
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.OwnerOnly)]
     [HttpPost("{id:guid}/reject")]
+    [HttpPost("~/api/v1/owner/applications/{id:guid}/reject")]
     public Task<IActionResult> Reject(
         Guid id,
         ReviewRequest request,
@@ -162,6 +211,7 @@ public sealed class RentalApplicationsController : ControllerBase
 
     [Authorize]
     [HttpGet("{id:guid}/owner-view")]
+    [HttpGet("~/api/v1/owner/applications/{id:guid}")]
     public async Task<ActionResult<RentalApplicationResponse>> GetOwnerApplication(
         Guid id,
         CancellationToken cancellationToken)
@@ -177,6 +227,7 @@ public sealed class RentalApplicationsController : ControllerBase
 
     [Authorize]
     [HttpGet("{id:guid}/tenant-view")]
+    [HttpGet("~/api/v1/tenant/applications/{id:guid}")]
     public async Task<ActionResult<RentalApplicationResponse>> GetTenantApplication(
         Guid id,
         CancellationToken cancellationToken)
@@ -239,8 +290,13 @@ public sealed class RentalApplicationsController : ControllerBase
         if (application is null)
             return NotFound();
 
-        if (application.Status is RentalApplicationStatus.Approved or RentalApplicationStatus.Rejected)
-            return Conflict("This application has already been reviewed.");
+        if (application.Status is not
+            (RentalApplicationStatus.Submitted or
+             RentalApplicationStatus.UnderReview))
+        {
+            return Conflict(
+                "Only submitted or under-review applications can be reviewed.");
+        }
 
         if (status == RentalApplicationStatus.Approved)
         {
@@ -309,13 +365,55 @@ public sealed class RentalApplicationsController : ControllerBase
         };
 }
 
-public sealed class CreateRentalApplicationRequest
+public sealed class CreateRentalApplicationRequest : IValidatableObject
 {
     public Guid UnitId { get; set; }
+
+    [Required]
+    [StringLength(2000)]
     public string EmploymentInformation { get; set; } = string.Empty;
+
+    [Range(1, int.MaxValue)]
     public int NumberOfOccupants { get; set; }
+
     public DateOnly PreferredMoveInDate { get; set; }
+
+    [Required]
+    [StringLength(2000)]
     public string Message { get; set; } = string.Empty;
+
+    public IEnumerable<ValidationResult> Validate(
+        ValidationContext validationContext)
+    {
+        if (PreferredMoveInDate == default)
+        {
+            yield return new ValidationResult(
+                "Preferred move-in date is required.",
+                new[] { nameof(PreferredMoveInDate) });
+        }
+
+        if (PreferredMoveInDate <
+            DateOnly.FromDateTime(DateTime.UtcNow))
+        {
+            yield return new ValidationResult(
+                "Preferred move-in date cannot be in the past.",
+                new[] { nameof(PreferredMoveInDate) });
+        }
+
+        if (string.IsNullOrWhiteSpace(EmploymentInformation))
+        {
+            yield return new ValidationResult(
+                "Employment information is required.",
+                new[] { nameof(EmploymentInformation) });
+        }
+
+        if (string.IsNullOrWhiteSpace(Message))
+        {
+            yield return new ValidationResult(
+                "Message is required.",
+                new[] { nameof(Message) });
+        }
+    }
 }
 
 public sealed class ReviewRequest
